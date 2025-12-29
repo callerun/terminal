@@ -139,6 +139,8 @@ namespace Terminal {
             update_cursor_shape ();
             update_theme ();
 
+            set_cell_height_scale(1.25);
+
             var granite_settings = Granite.Settings.get_default ();
             granite_settings.notify["prefers-color-scheme"].connect (update_theme);
             Application.settings.changed["audible-bell"].connect (update_audible_bell);
