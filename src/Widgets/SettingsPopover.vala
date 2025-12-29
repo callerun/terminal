@@ -65,7 +65,7 @@ public sealed class Terminal.SettingsPopover : Gtk.Popover {
         };
 
         var light_button = new ThemeCheckButton (Themes.LIGHT) {
-            tooltip_text = _("Solarized Light")
+            tooltip_text = _("Gruvbox Light")
         };
 
         var dark_button = new ThemeCheckButton (Themes.DARK) {

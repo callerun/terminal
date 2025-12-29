@@ -19,7 +19,7 @@
 public class Terminal.Themes {
     public const string DARK = "dark";
     public const string HIGH_CONTRAST = "high-contrast";
-    public const string LIGHT = "solarized-light";
+    public const string LIGHT = "gruvbox";
     public const string CUSTOM = "custom";
     public const int PALETTE_SIZE = 19;
 
@@ -82,9 +82,9 @@ public class Terminal.Themes {
                 break;
             case (LIGHT):
                 string_palette = {
-                    "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
-                    "#002b36", "#dc322f", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
-                    "#FDF6E3", "#586e75", "#839496"
+                    "#fbf1c7", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#3c3836",
+                    "#f9f5d7", "#cc241d", "#504945", "#665c54", "#3c3836", "#8f3f71", "#282828", "#fbf1c7",
+                    "#fbf1c7", "#504945", "#3c3836"
                 };
                 break;
             case (DARK):
