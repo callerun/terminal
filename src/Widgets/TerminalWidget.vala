@@ -5,10 +5,23 @@
 
 namespace Terminal {
     public class TerminalWidget : Vte.Terminal {
-        enum DropTargets {
-            URILIST,
-            STRING,
-            TEXT
+        public enum TabState {
+            NONE,
+            WORKING,
+            COMPLETED,
+            ERROR;
+
+            public GLib.Icon? to_icon () {
+                switch (this) {
+                    //TODO Should we have an icon for the presence of a foreground process?
+                    case COMPLETED:
+                        return new GLib.ThemedIcon ("process-completed-symbolic");
+                    case ERROR:
+                        return new GLib.ThemedIcon ("process-error-symbolic");
+                    default:
+                        return null;
+                }
+            }
         }
 
         internal const string DEFAULT_LABEL = _("Terminal");
@@ -17,76 +30,67 @@ namespace Terminal {
         public string program_string { get; set; default = ""; }
         static int terminal_id_counter = 0;
         private bool init_complete;
-        public bool resized {get; set;}
+        private bool resized { get; set; }
+        public TabState tab_state { get; set; default = NONE; }
 
         GLib.Pid child_pid;
         GLib.Pid fg_pid;
 
-        public unowned MainWindow main_window { get; construct set; }
-
-        private Terminal.Application app {
-            get {
-                return main_window.app;
-            }
-        }
-
         // There may be no associated tab while made restorable or when closing
         public unowned Adw.TabPage? tab;
 
-        public const string ACTION_OPEN_IN_BROWSER = "term.open-in-browser";
-        public const string ACTION_COPY = "term.copy";
-        public const string ACTION_COPY_OUTPUT = "term.copy-output";
-        public const string ACTION_CLEAR_SCREEN = "term.clear-screen";
-        public const string ACTION_RESET = "term.reset";
-        public const string ACTION_PASTE = "term.paste";
-        public const string ACTION_RELOAD = "term.reload";
-        public const string ACTION_SCROLL_TO_COMMAND = "term.scroll-to-command";
-        public const string ACTION_SELECT_ALL = "term.select-all";
+        private const string ACTION_OPEN_IN_BROWSER = "term.open-in-browser";
+        private const string ACTION_COPY = "term.copy";
+        private const string ACTION_COPY_OUTPUT = "term.copy-output";
+        private const string ACTION_CLEAR_SCREEN = "term.clear-screen";
+        private const string ACTION_RESET = "term.reset";
+        private const string ACTION_PASTE = "term.paste";
+        private const string ACTION_RELOAD = "term.reload";
+        private const string ACTION_SCROLL_TO_COMMAND = "term.scroll-to-command";
+        private const string ACTION_SELECT_ALL = "term.select-all";
 
-        public const string[] ACCELS_OPEN_IN_BROWSER = { "<Control><Shift>E", null };
-        public const string[] ACCELS_COPY = { "<Control><Shift>C", null };
-        public const string[] ACCELS_COPY_OUTPUT = { "<Alt>C", null };
-        public const string[] ACCELS_CLEAR_SCREEN = { "<Control><Shift>L", null };
-        public const string[] ACCELS_RESET = { "<Control><Shift>K", null };
-        public const string[] ACCELS_PASTE = { "<Control><Shift>V", null };
-        public const string[] ACCELS_RELOAD = { "<Control><Shift>R", "<Ctrl>F5", null };
-        public const string[] ACCELS_SCROLL_TO_COMMAND = { "<Alt>Up", null };
-        public const string[] ACCELS_SELECT_ALL = { "<Control><Shift>A", null };
+        private const string[] ACCELS_OPEN_IN_BROWSER = { "<Control><Shift>E", null };
+        private const string[] ACCELS_COPY = { "<Control><Shift>C", null };
+        private const string[] ACCELS_COPY_OUTPUT = { "<Alt>C", null };
+        private const string[] ACCELS_CLEAR_SCREEN = { "<Control><Shift>L", null };
+        private const string[] ACCELS_RESET = { "<Control><Shift>K", null };
+        private const string[] ACCELS_PASTE = { "<Control><Shift>V", null };
+        private const string[] ACCELS_RELOAD = { "<Control><Shift>R", "<Ctrl>F5", null };
+        private const string[] ACCELS_SELECT_ALL = { "<Control><Shift>A", null };
         // Specify zooming shortcuts for use by tooltips in SettingsPopover. We don't use actions for this.
         public const string[] ACCELS_ZOOM_DEFAULT = { "<control>0", "<Control>KP_0", null };
         public const string[] ACCELS_ZOOM_IN = { "<Control>plus", "<Control>equal", "<Control>KP_Add", null };
         public const string[] ACCELS_ZOOM_OUT = { "<Control>minus", "<Control>KP_Subtract", null };
 
-        public int default_size;
-        const string SEND_PROCESS_FINISHED_BASH = "dbus-send --type=method_call " +
-                                                  "--session --dest=io.elementary.terminal " +
-                                                  "/io/elementary/terminal " +
-                                                  "io.elementary.terminal.ProcessFinished " +
-                                                  "string:$PANTHEON_TERMINAL_ID " +
-                                                  "string:\"$(fc -nl -1 | cut -c 3-)\" " +
-                                                  "int32:\$__bp_last_ret_value >/dev/null 2>&1";
+        private const string SEND_PROCESS_FINISHED_BASH = "dbus-send --type=method_call " +
+                                                          "--session --dest=io.elementary.terminal " +
+                                                          "/io/elementary/terminal " +
+                                                          "io.elementary.terminal.ProcessFinished " +
+                                                          "string:$PANTHEON_TERMINAL_ID " +
+                                                          "string:\"$(fc -nl -1 | cut -c 3-)\" " +
+                                                          "int32:\$__bp_last_ret_value >/dev/null 2>&1";
 
         /* Following strings are used to build RegEx for matching URIs */
-        const string USERCHARS = "-[:alnum:]";
-        const string USERCHARS_CLASS = "[" + USERCHARS + "]";
-        const string PASSCHARS_CLASS = "[-[:alnum:]\\Q,?;.:/!%$^*&~\"#'\\E]";
-        const string HOSTCHARS_CLASS = "[-[:alnum:]]";
-        const string HOST = HOSTCHARS_CLASS + "+(\\." + HOSTCHARS_CLASS + "+)*";
-        const string PORT = "(?:\\:[[:digit:]]{1,5})?";
-        const string PATHCHARS_CLASS = "[-[:alnum:]\\Q_$.+!*,;:@&=?/~#%\\E]";
-        const string PATHTERM_CLASS = "[^\\Q]'.}>) \t\r\n,\"\\E]";
-        const string SCHEME = "(?:news:|telnet:|nntp:|file:\\/|https?:|ftps?:|sftp:|webcal:" +
-                              "|irc:|sftp:|ldaps?:|nfs:|smb:|rsync:|ssh:|rlogin:|telnet:|git:" +
-                              "|git\\+ssh:|bzr:|bzr\\+ssh:|svn:|svn\\+ssh:|hg:|mailto:|magnet:)";
+        private const string USERCHARS = "-[:alnum:]";
+        private const string USERCHARS_CLASS = "[" + USERCHARS + "]";
+        private const string PASSCHARS_CLASS = "[-[:alnum:]\\Q,?;.:/!%$^*&~\"#'\\E]";
+        private const string HOSTCHARS_CLASS = "[-[:alnum:]]";
+        private const string HOST = HOSTCHARS_CLASS + "+(\\." + HOSTCHARS_CLASS + "+)*";
+        private const string PORT = "(?:\\:[[:digit:]]{1,5})?";
+        private const string PATHCHARS_CLASS = "[-[:alnum:]\\Q_$.+!*,;:@&=?/~#%\\E]";
+        private const string PATHTERM_CLASS = "[^\\Q]'.}>) \t\r\n,\"\\E]";
+        private const string SCHEME = "(?:news:|telnet:|nntp:|file:\\/|https?:|ftps?:|sftp:|webcal:" +
+                                      "|irc:|sftp:|ldaps?:|nfs:|smb:|rsync:|ssh:|rlogin:|telnet:|git:" +
+                                      "|git\\+ssh:|bzr:|bzr\\+ssh:|svn:|svn\\+ssh:|hg:|mailto:|magnet:)";
 
-        const string USERPASS = USERCHARS_CLASS + "+(?:" + PASSCHARS_CLASS + "+)?";
-        const string URLPATH = "(?:(/" + PATHCHARS_CLASS +
-                               "+(?:[(]" + PATHCHARS_CLASS +
-                               "*[)])*" + PATHCHARS_CLASS +
-                               "*)*" + PATHTERM_CLASS +
-                               ")?";
+        private const string USERPASS = USERCHARS_CLASS + "+(?:" + PASSCHARS_CLASS + "+)?";
+        private const string URLPATH = "(?:(/" + PATHCHARS_CLASS +
+                                      "+(?:[(]" + PATHCHARS_CLASS +
+                                      "*[)])*" + PATHCHARS_CLASS +
+                                      "*)*" + PATHTERM_CLASS +
+                                      ")?";
 
-        const string[] REGEX_STRINGS = {
+        private const string[] REGEX_STRINGS = {
             SCHEME + "//(?:" + USERPASS + "\\@)?" + HOST + PORT + URLPATH,
             "(?:www|ftp)" + HOSTCHARS_CLASS + "*\\." + HOST + PORT + URLPATH,
             "(?:callto:|h323:|sip:)" + USERCHARS_CLASS + "[" + USERCHARS + ".]*(?:" + PORT + "/[a-z0-9]+)?\\@" + HOST,
@@ -97,7 +101,7 @@ namespace Terminal {
         public const double MIN_SCALE = 0.25;
         public const double MAX_SCALE = 4.0;
 
-        public const int SYS_PIDFD_OPEN = 434; // Same on every arch
+        private const int SYS_PIDFD_OPEN = 434; // Same on every arch
 
         public bool killed { get; private set; default = false; }
 
@@ -114,7 +118,7 @@ namespace Terminal {
         private long remembered_position; /* Only need to remember row at the moment */
         private long remembered_command_start_row = 0; /* Only need to remember row at the moment */
         private long remembered_command_end_row = 0; /* Only need to remember row at the moment */
-        public bool last_key_was_return = true;
+        private bool last_key_was_return = true;
         private bool child_has_exited = false;
         private string? link_uri = null;
 
@@ -123,12 +127,6 @@ namespace Terminal {
 
         public signal void cwd_changed ();
         public signal void foreground_process_changed (string cmdline);
-
-        public TerminalWidget (MainWindow parent_window) {
-            Object (
-                main_window: parent_window
-            );
-        }
 
         construct {
             pointer_autohide = true;
@@ -174,17 +172,16 @@ namespace Terminal {
             focus_controller.leave.connect (() => scroll_controller.flags = NONE);
             focus_controller.enter.connect (() => scroll_controller.flags = VERTICAL);
 
-            var primary_gesture = new Gtk.GestureClick () {
-                propagation_phase = TARGET,
-                button = Gdk.BUTTON_PRIMARY
+            var click_controller = new Gtk.GestureClick () {
+                button = 0,
+                exclusive = true
             };
-            primary_gesture.pressed.connect (primary_pressed);
+            click_controller.pressed.connect (click_pressed);
 
-            var secondary_gesture = new Gtk.GestureClick () {
-                propagation_phase = TARGET,
-                button = Gdk.BUTTON_SECONDARY
+            var long_press_controller = new Gtk.GestureLongPress () {
+                touch_only = true
             };
-            secondary_gesture.released.connect (secondary_released);
+            long_press_controller.pressed.connect (secondary_pressed);
 
             // Accels added by set_accels_for_action in Application do not work for actions
             // in child widgets so use shortcut_controller instead.
@@ -202,7 +199,7 @@ namespace Terminal {
             );
 
             var scroll_to_command_shortcut = new Gtk.Shortcut (
-                new Gtk.KeyvalTrigger (Gdk.Key.Up, ALT_MASK),
+                new Gtk.KeyvalTrigger (Gdk.Key.U, ALT_MASK),
                 new Gtk.NamedAction ("term.scroll-to-command")
             );
 
@@ -224,8 +221,8 @@ namespace Terminal {
             add_controller (scroll_controller);
             add_controller (key_controller);
             add_controller (focus_controller);
-            add_controller (secondary_gesture);
-            add_controller (primary_gesture);
+            add_controller (click_controller);
+            add_controller (long_press_controller);
             add_controller (shortcut_controller);
 
             selection_changed.connect (() => copy_action.set_enabled (get_has_selection ()));
@@ -234,6 +231,7 @@ namespace Terminal {
             notify["width-request"].connect (() => resized = true);
             contents_changed.connect (on_contents_changed);
             child_exited.connect (on_child_exited);
+            window_title_changed.connect (on_window_title_changed);
             ulong once = 0;
             once = realize.connect (() => {
                 clipboard = Gdk.Display.get_default ().get_clipboard ();
@@ -300,7 +298,7 @@ namespace Terminal {
             allow_hyperlink = has_focus;
         }
 
-        private void secondary_released (Gtk.GestureClick gesture, int n_press, double x, double y) {
+        private void secondary_pressed (Gtk.GestureSingle gesture, double x, double y) {
             if (has_foreground_process ()) {
                 gesture.set_state (CLAIMED);
                 return;
@@ -315,11 +313,19 @@ namespace Terminal {
             popup_context_menu (x, y);
 
             gesture.set_state (CLAIMED);
+            gesture.reset ();
         }
 
-        private void primary_pressed (Gtk.GestureClick gesture, int n_press, double x, double y) {
-            var control_pressed = Gdk.ModifierType.CONTROL_MASK in gesture.get_current_event_state ();
+        private void click_pressed (Gtk.GestureClick gesture, int n_press, double x, double y) {
+            var sequence = gesture.get_current_sequence ();
+            var event = gesture.get_last_event (sequence);
 
+            if (event.triggers_context_menu ()) {
+                secondary_pressed (gesture, x, y);
+                return;
+            }
+
+            var control_pressed = Gdk.ModifierType.CONTROL_MASK in gesture.get_current_event_state ();
             link_uri = null;
             if (allow_hyperlink && control_pressed) {
                 link_uri = get_link (x, y);
@@ -665,8 +671,9 @@ namespace Terminal {
             feed_command (command);
         }
 
+        private string old_loc = "";
         public void reload () {
-            var old_loc = get_shell_location ();
+            old_loc = get_shell_location ();
             confirm_kill_fg_process (
                 _("Are you sure you want to reload this tab?"),
                 _("Reload"),
@@ -783,6 +790,14 @@ namespace Terminal {
             child_has_exited = true;
             last_key_was_return = true;
             fg_pid = -1;
+        }
+
+        private void on_window_title_changed () {
+            if (has_foreground_process ()) {
+                tab_state = WORKING;
+            }
+
+            // Application.dbus_register handles resetting the state
         }
 
         public void kill_fg () {
@@ -917,7 +932,7 @@ namespace Terminal {
             );
         }
 
-        public bool try_get_foreground_pid (out int pid) {
+        private bool try_get_foreground_pid (out int pid) {
             if (child_has_exited) {
                 pid = -1;
                 return false;
@@ -937,16 +952,6 @@ namespace Terminal {
 
         public bool has_foreground_process () {
             return try_get_foreground_pid (null);
-        }
-
-        public int calculate_width (int column_count) {
-            int width = (int) (this.get_char_width ()) * column_count;
-            return width;
-        }
-
-        public int calculate_height (int row_count) {
-            int height = (int) (this.get_char_height ()) * row_count;
-            return height;
         }
 
         private void clickable (string[] str) {
@@ -977,7 +982,7 @@ namespace Terminal {
             }
         }
 
-        public string get_pid_exe_name (int pid) {
+        private string get_pid_exe_name (int pid) {
             try {
                 var exe = GLib.FileUtils.read_link ("/proc/%d/exe".printf (pid));
                 return Path.get_basename (exe);
@@ -1030,13 +1035,13 @@ namespace Terminal {
             return true;
         }
 
-        public void remember_position () {
+        private void remember_position () {
             long col, row;
             get_cursor_position (out col, out row);
             remembered_position = row;
         }
 
-        public void remember_command_start_position () {
+        private void remember_command_start_position () {
             if (!last_key_was_return || has_foreground_process ()) {
                 return;
             }
@@ -1048,7 +1053,7 @@ namespace Terminal {
             resized = false;
         }
 
-        public void remember_command_end_position () {
+        private void remember_command_end_position () {
             if (last_key_was_return && !has_foreground_process ()) {
                 return;
             }
@@ -1092,11 +1097,10 @@ namespace Terminal {
         }
 
         private void scroll_to_command (GLib.SimpleAction action, GLib.Variant? parameter) {
+            //Note. This does not work when running under `tmux` - native scrolling is suppressed in a tmux pane
             long row, delta;
-
             get_cursor_position (null, out row);
             delta = remembered_position - row;
-
             vadjustment.value += (int) delta + height_request / get_char_height () - 1;
             action.set_enabled (false); // Repeated presses are ignored
         }
@@ -1136,13 +1140,6 @@ namespace Terminal {
                     return Source.REMOVE;
                 }
             );
-        }
-
-        public void prepare_to_close () {
-            if (contents_changed_timeout_id > 0) {
-                Source.remove (contents_changed_timeout_id);
-                contents_changed_timeout_id = 0;
-            }
         }
 
         private void open_in_browser (GLib.SimpleAction action, GLib.Variant? parameter) {
