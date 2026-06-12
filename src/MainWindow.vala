@@ -6,7 +6,6 @@
 namespace Terminal {
     public class MainWindow : Adw.Window {
         private Adw.HeaderBar header;
-        public TerminalView notebook { get; private set construct; }
         private Terminal.Widgets.SearchToolbar search_toolbar;
         private Gtk.Button unfullscreen_button;
         private Gtk.Label title_label;
@@ -18,7 +17,7 @@ namespace Terminal {
         public bool recreate_tabs { get; construct; }
         public Terminal.Application app { get; construct; }
         public SimpleActionGroup actions { get; construct; }
-
+        public TerminalView notebook { get; private set; }
         public TerminalWidget? current_terminal { get; private set; default = null; }
 
         public const string ACTION_PREFIX = "win.";
@@ -282,12 +281,9 @@ namespace Terminal {
                     return;
                 }
 
-                title = term.window_title != "" ? term.window_title
-                                                : term.current_working_directory;
-
-
                 // Need to wait for default handler to run before focusing
                 Idle.add (() => {
+                    set_title_label ();
                     term.grab_focus ();
                     return Source.REMOVE;
                 });
@@ -452,8 +448,8 @@ namespace Terminal {
         private void connect_terminal_signals (TerminalWidget terminal_widget) {
             terminal_widget.child_exited.connect (on_terminal_child_exited);
             terminal_widget.cwd_changed.connect (on_terminal_cwd_changed);
-            terminal_widget.foreground_process_changed.connect (on_terminal_program_changed);
-            terminal_widget.window_title_changed.connect (on_terminal_window_title_changed);
+            terminal_widget.foreground_process_changed.connect (set_title_label);
+            terminal_widget.window_title_changed.connect (set_title_label);
         }
 
         private void on_terminal_child_exited (Vte.Terminal term, int status) {
@@ -480,8 +476,14 @@ namespace Terminal {
             }
         }
 
-        private void on_terminal_window_title_changed () {
-            title = current_terminal.window_title;
+        private void set_title_label () {
+            if (current_terminal.window_title != "") {
+                title = current_terminal.window_title;
+            } else if (current_terminal.current_working_directory != "") {
+                title = current_terminal.current_working_directory;
+            } else {
+                title = TerminalWidget.DEFAULT_LABEL; // Do we need a different fallback window title?
+            }
         }
 
         private bool close_immediately = false;
@@ -703,10 +705,10 @@ namespace Terminal {
             return term;
         }
 
-        public unowned TerminalWidget? get_terminal (string id) {
-            for (int i = 0; i < notebook.n_pages; i++) {
+        public unowned TerminalWidget? get_terminal (string terminal_id) {
+            for (var i = 0; i < notebook.n_pages; i++) {
                 unowned var term = get_term_widget (notebook.tab_view.get_nth_page (i));
-                if (term.terminal_id == id) {
+                if (term.terminal_id == terminal_id) {
                     return term;
                 }
             }
@@ -714,8 +716,16 @@ namespace Terminal {
             return null;
         }
 
-        public void set_active_terminal_tab (Adw.TabPage tab) {
-            notebook.tab_view.selected_page = tab;
+        public unowned Adw.TabPage? get_page (string terminal_id) {
+            for (var i = 0; i < notebook.n_pages; i++) {
+                unowned var page = notebook.tab_view.get_nth_page (i);
+                unowned var terminal_widget = get_term_widget (page);
+                if (terminal_widget.terminal_id == terminal_id) {
+                    return page;
+                }
+            }
+
+            return null;
         }
 
         /** Compare every tab label with every other and resolve ambiguities **/
@@ -753,18 +763,12 @@ namespace Terminal {
                     }
                 }
             }
-
-            return;
         }
 
         private void on_terminal_cwd_changed () {
-            check_for_tabs_with_same_name (); // Also sets window title
+            check_for_tabs_with_same_name ();
             save_opened_terminals (true, false);
-        }
-
-        private void on_terminal_program_changed (TerminalWidget src, string cmdline) {
-            src.program_string = cmdline;
-            check_for_tabs_with_same_name (); // Also sets window title
+            set_title_label ();
         }
 
         public void save_opened_terminals (bool save_tabs, bool save_zooms) {
